@@ -7,18 +7,16 @@ import Control.Exception qualified as E
 import Crypto.Random
 import Data.ByteString qualified as B
 import Data.ByteString.Builder qualified as B
-import Data.Functor.Identity
 import Network.DNS.Parser
 import Network.Socket
 import Network.Socket.ByteString (recv)
 import Network.Socket.ByteString.Lazy (sendAll)
-import Text.Megaparsec
 
 main :: IO ()
 main = do
   -- "198.41.0.4"
   let hints = defaultHints{addrFamily = AF_INET, addrSocketType = Datagram}
-  addr <- head <$> getAddrInfo (Just hints) (Just "198.41.0.4") (Just "53")
+  addr <- head <$> getAddrInfo (Just hints) (Just "1.1.1.1") (Just "53")
 
   E.bracket
     ( E.bracketOnError (openSocket addr) close $ \sock -> do
@@ -35,7 +33,7 @@ main = do
           nscount = B.word16BE 0
           arcount = B.word16BE 0
       let qname =
-            formatQname "com"
+            formatQname "blog2.thoughtbank.app"
               <> B.word16BE 1
               <> B.word16BE 1
 

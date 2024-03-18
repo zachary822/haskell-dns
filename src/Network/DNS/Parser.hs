@@ -4,37 +4,53 @@
 module Network.DNS.Parser where
 
 import Control.Monad.Trans.Class
-import Control.Monad.Trans.Except
-import Control.Monad.Trans.State.Strict
+import Control.Monad.Trans.State.Strict qualified as Trans
 import Data.Bifunctor
 import Data.Bits
 import Data.ByteString qualified as B
 import Data.IntMap.Strict qualified as M
 import Data.Void
-import Debug.Trace
+import Data.Word
 import Network.DNS.Types
 import Text.Megaparsec
-import Text.Megaparsec.Byte
 import Text.Megaparsec.Byte.Binary
 
-type Parser = Parsec Void B.ByteString
+build :: Int -> [B.ByteString] -> [(Int, B.ByteString)]
+build _ [] = []
+build offset segments@(s : xs) = (offset, B.intercalate "." segments) : build (offset + B.length s + 1) xs
+
+type Parser =
+  ParsecT Void B.ByteString (Trans.State (M.IntMap B.ByteString))
 
 pSegment :: Parser B.ByteString
 pSegment = word8 >>= takeP (Just "segment") . fromIntegral
 
-pName :: Parser Name
+pName :: Parser B.ByteString
 pName = do
+  offset <- getOffset
+
   (segments, end) <-
-    first (B.intercalate ".")
-      <$> manyTill_ pSegment (satisfy $ \t -> t == 0 || (t .&. 192 /= 0))
+    manyTill_ pSegment (satisfy $ \t -> t == 0 || (t .&. 192 /= 0))
 
   if end == 0
-    then
-      return $ FullName segments
+    then do
+      -- cache the things
+      lift (Trans.modify (M.union (M.fromDistinctAscList (build offset segments))))
+      return $ B.intercalate "." segments
     else do
       o <- word8
-      return $
-        PointerName segments (fromIntegral (end .&. 63) `shiftL` 8 + fromIntegral o)
+      let ptr :: Word16 = fromIntegral (end .&. 63) `shiftL` 8 + fromIntegral o
+          prefix = B.intercalate "." segments
+
+      suffix <- lift (Trans.gets (M.! fromIntegral ptr))
+
+      if B.null prefix
+        then return suffix
+        else do
+          let c =
+                M.fromDistinctAscList (map (second (<> "." <> suffix)) (build offset segments))
+          lift (Trans.modify (M.union c))
+          return (prefix <> "." <> suffix)
 
 pQuestion :: Parser Question
 pQuestion = Question <$> pName <*> word16be <*> word16be
@@ -68,7 +84,7 @@ pRR = do
 
   return RR{..}
 
--- pDnsResponse :: Parser DNS
+pDns :: Parser DNS
 pDns = do
   id_ <- takeP (Just "id") 2
   flags <- takeP (Just "flags") 2
@@ -82,48 +98,10 @@ pDns = do
   nss <- count (fromIntegral nsCount) pRR
   ars <- count (fromIntegral arCount) pRR <* eof
 
-  return (DNSHeader{..}, qs, ans, nss, ars)
+  return DNS{header = DNSHeader{..}, ..}
 
-parseDns msg = do
-  thing <-
-    runResolvePointer
-      msg
-      ( do
-          (_, _, _, _, ars) <- lift $ except $ runParser pDns "" msg
-
-          traverse resolvePointer (map name ars)
-      )
-
-  traceShowM thing
-
-  return thing
-
-type PointerStateT m = StateT (B.ByteString, (M.IntMap B.ByteString)) m
-
-resolvePointer ::
-  Name ->
-  PointerStateT
-    (Except (ParseErrorBundle B.ByteString Void))
-    B.ByteString
-resolvePointer (FullName n) = return n
-resolvePointer (PointerName prefix offset) = do
-  msuffix <- gets (M.lookup (fromIntegral offset) . snd)
-
-  resolved <- case msuffix of
-    Just s -> return s
-    Nothing -> do
-      m <- gets (B.drop (fromIntegral offset) . fst)
-      name <- lift $ except (parse pName "" m)
-      res <- case name of
-        (FullName n) -> return n
-        nm@(PointerName _ _) -> resolvePointer nm
-      modify $ second (M.insert (fromIntegral offset) res)
-      return res
-
-  return $ if B.null prefix then resolved else prefix <> "." <> resolved
-
-runResolvePointer ::
-  B.ByteString ->
-  PointerStateT (Except (ParseErrorBundle B.ByteString Void)) a1 ->
-  (Either (ParseErrorBundle B.ByteString Void) a1)
-runResolvePointer msg a = runExcept $ evalStateT a (msg, mempty)
+parseDns :: B.ByteString -> Either String DNS
+parseDns msg =
+  flip Trans.evalState mempty $
+    first errorBundlePretty
+      <$> runParserT pDns "" msg

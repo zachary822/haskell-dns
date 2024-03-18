@@ -13,15 +13,24 @@ data DNSHeader = DNSHeader
   }
   deriving (Show, Eq)
 
+data DNS = DNS
+  { header :: !DNSHeader
+  , qs :: ![Question]
+  , ans :: ![RR]
+  , nss :: ![RR]
+  , ars :: ![RR]
+  }
+  deriving (Show, Eq)
+
 data Question = Question
-  { qname :: !Name
+  { qname :: !ByteString
   , qtype :: !Word16
   , qclass :: !Word16
   }
   deriving (Show, Eq)
 
 data RR = RR
-  { name :: !Name
+  { name :: !ByteString
   , rtype :: !Word16
   , rclass :: !Word16
   , ttl :: !Word32
@@ -33,24 +42,19 @@ data RR = RR
 data RData
   = RData !ByteString
   | ARData !Word32
-  | NSRData !Name
-  | CNAMERData !Name
+  | NSRData !ByteString
+  | CNAMERData !ByteString
   | SOARData
-      { mname :: !Name
-      , rname :: !Name
+      { mname :: !ByteString
+      , rname :: !ByteString
       , serial :: !Word32
       , refresh :: !Word32
       , retry :: !Word32
       , expire :: !Word32
       , minimum :: !Word32
       }
-  | PTRRData !Name
-  | MXRData !Word16 !Name
+  | PTRRData !ByteString
+  | MXRData !Word16 !ByteString
   | TXTRData !ByteString
   | AAAARData !(Word32, Word32, Word32, Word32)
-  deriving (Show, Eq)
-
-data Name
-  = FullName !ByteString
-  | PointerName !ByteString !Word16
   deriving (Show, Eq)
