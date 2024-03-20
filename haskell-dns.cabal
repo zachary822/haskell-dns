@@ -59,7 +59,8 @@ library
 
     -- Modules exported by the library.
     exposed-modules:  Network.DNS.Types,
-                      Network.DNS.Parser
+                      Network.DNS.Parser,
+                      Network.DNS.Utils
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -98,7 +99,7 @@ executable haskell-dns
         base ^>=4.19.1.0,
         network,
         bytestring,
-        crypton,
+        random,
         megaparsec,
         haskell-dns
 
